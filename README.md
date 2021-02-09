@@ -51,23 +51,20 @@ details how to use search tools for Wikimedia
     that each image has at least one pixel with 0 < A < 255
     - Categories: `Astronomy, Biology, Drawing, Engineering, Geology, Heraldry, Insignia, Mathematics, Other`
 
-## Wikidata query
+## Wikidata query service
 
-[Wikidata has a query service](https://query.wikidata.org/) with examples like
-[cats, with pictures](https://query.wikidata.org/#%23Cats%2C%20with%20pictures%0A%23defaultView%3AImageGrid%0ASELECT%20%3Fitem%20%3FitemLabel%20%3Fpic%0AWHERE%0A%7B%0A%3Fitem%20wdt%3AP31%20wd%3AQ146%20.%0A%3Fitem%20wdt%3AP18%20%3Fpic%0ASERVICE%20wikibase%3Alabel%20%7B%20bd%3AserviceParam%20wikibase%3Alanguage%20%22%5BAUTO_LANGUAGE%5D%2Cen%22%20%7D%0A%7D)
-
-The first step to finding images I want is to go backwards and inspect the properties of an image
-found already (from the Commons: Featured pictures link above)
-
-- An example of such a picture is [Scheme of a submarine eruption](https://commons.wikimedia.org/wiki/Commons:Featured_pictures/Non-photographic_media/Computer-generated#/media/File:Submarine_Eruption-numbers.svg)
-  - This is a SVG but every SVG has a PNG (e.g. here it's
-    [this 1080x1080px PNG](https://upload.wikimedia.org/wikipedia/commons/thumb/9/93/Submarine_Eruption-numbers.svg/1080px-Submarine_Eruption-numbers.svg.png))
-  - Clicking "More details" gives the [details page](https://commons.wikimedia.org/wiki/File:Submarine_Eruption-numbers.svg)
-- The property for a Wikimedia Commons featured picture is [`Q63348049`](https://www.wikidata.org/wiki/Q63348049)
+See [notes on using Wikidata query service](https://github.com/lmmx/devnotes/wiki/Using-Wikidata-Query-Service)
 
 ### Discarded options
+
+<details><summary><em>More details</em></summary>
+  
+<p>
 
 Another possibility is to use the category [Transparent background](https://commons.wikimedia.org/wiki/Category:Transparent_background)
 - You can filter these for [Featured pictures](https://commons.wikimedia.org/wiki/Category:Transparent_background#)
   but this doesn't give many (only 22 and they don't look very semitransparent, just "sticker-like",
   i.e. completely opaque or completely transparent)
+
+</p>
+</details>
