@@ -1,35 +1,45 @@
 # wikimedia-transp
 
+[![Documentation](https://readthedocs.org/projects/wikitransp/badge/?version=latest)](https://wikitransp.readthedocs.io/en/latest/)
+[![CI Status](https://github.com/lmmx/wikitransp/actions/workflows/master.yml/badge.svg)](https://github.com/lmmx/wikitransp/actions/workflows/master.yml)
+[![Coverage](https://codecov.io/gh/lmmx/wikitransp/branch/master/graph/badge.svg)](https://codecov.io/github/lmmx/wikitransp)
+[![Checked with mypy](http://www.mypy-lang.org/static/mypy_badge.svg)](http://mypy-lang.org)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+
+
 Dataset of transparent images from Wikimedia.
 
 - E.g. [an image of some dice](https://www.wikidata.org/wiki/Q178051#/media/File:PNG_transparency_demonstration_1.png)
 
 ## Requirements
 
-- Python 3
-- Libraries: (None yet)
+- Python 3.8+
 
 ## License
 
 TODO: determine license based on licensing of images (I presume they will be CC, so CC0 if
-possible). Code cannot be licensed as CC0 so I presume GPLv3 would be the equivalent.
+possible).
 
-## Usage
+- Note: this remains to be determined and the dataset will probably be split up accordingly
+
+This library is MIT licensed (a permissive license).
+
+## Usage (TBD)
 
 Intended usage is to provide a simple interface to a scraped dataset of images from Wikimedia
 
 - Scraping can be carried out as:
-  
+
   ```py
   from wikitransp import scrape_images
   scrape_images()
   ```
-  
+
   This would then save the images to the default directory within the package
   (`src/wikitransp/data/store`) or an argument `save_dir` could be passed to `scrape_images()`
 
 - Data access
-  
+
   ```py
   from wikitransp.dataset import all_images, large_images, medium_images, small_images
   ```
@@ -58,7 +68,7 @@ See [notes on using Wikidata query service](https://github.com/lmmx/devnotes/wik
 ### Discarded options
 
 <details><summary><em>More details</em></summary>
-  
+
 <p>
 
 Another possibility is to use the category [Transparent background](https://commons.wikimedia.org/wiki/Category:Transparent_background)
