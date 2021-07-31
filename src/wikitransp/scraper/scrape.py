@@ -3,7 +3,7 @@ import zlib
 from range_streams import RangeStream
 from range_streams.codecs import PngStream
 
-from ..data import SAMPLE_DATA_URL
+from ..data import FULL_DATA_URLS, SAMPLE_DATA_URL
 
 __all__ = ["scrape_images"]
 
@@ -30,5 +30,6 @@ def scrape_images(sample: bool = True) -> None:
     for suitable PNGs.
 
     Args:
-      sample : Whether to only store a sample
+      sample : Whether to only scrape the 1% sample dataset
     """
+    data_urls = [SAMPLE_DATA_URL] if sample else FULL_DATA_URLS

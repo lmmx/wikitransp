@@ -6,7 +6,7 @@ import wikitransp
 @fixture(scope="session")
 def foo():
     """
-    Foo
+    ...
     """
     return None
 

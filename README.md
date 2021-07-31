@@ -9,7 +9,7 @@
 
 Dataset of transparent images from Wikimedia.
 
-- E.g. [an image of some dice](https://www.wikidata.org/wiki/Q178051#/media/File:PNG_transparency_demonstration_1.png)
+- e.g. [an image of some dice](https://www.wikidata.org/wiki/Q178051#/media/File:PNG_transparency_demonstration_1.png)
 
 ## Requirements
 
