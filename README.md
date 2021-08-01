@@ -28,53 +28,32 @@ This library is MIT licensed (a permissive license).
 
 Intended usage is to provide a simple interface to a scraped dataset of images from Wikimedia
 
-- Scraping can be carried out as:
+- Scraping of the 1% sample can be carried out as:
 
   ```py
-  from wikitransp import scrape_images
-  scrape_images()
+  from wikitransp.scraper import scrape_images
+  scrape_images(sample=True)
   ```
 
-  This would then save the images to the default directory within the package
-  (`src/wikitransp/data/store`) or an argument `save_dir` could be passed to `scrape_images()`
+  and the full dataset can be scraped instead by toggling the `sample` flag to `False`.
 
-- Data access
+  Currently this only filters the dataset according to size and transparency (this step remains
+  too slow to proceed further, and will be parallelised with async HTTP requests).
+
+  This then saves the filtered TSV (in future will save the images themselves) to the default
+  directory within the package (`src/wikitransp/data/store`) or an argument `save_dir` could
+  be passed to `scrape_images()` [not implemented for now].
+
+- Data access will look something like this (I expect):
 
   ```py
   from wikitransp.dataset import all_images, large_images, medium_images, small_images
   ```
 
-## Guide to finding images
+## Guide to filtering images
 
-The tutorial [Finding images](https://en.wikipedia.org/wiki/Wikipedia:Finding_images_tutorial)
-details how to use search tools for Wikimedia
-
-## Transparent image search results
-
-- CC search (mentioned [here](https://commons.wikimedia.org/wiki/Commons:Simple_media_reuse_guide)) finds
-  [quite a few HR semi-transparent images](https://search.creativecommons.org/search?q=transparent&extension=png&size=large)
-  - Unclear at a glance how many would have a range of values rather than just blocks of same alpha
-    value (which would presumably be less effective to train on for alpha decompositing)
-- [Commons: Featured pictures » Non-photographic media » Computer-generated](https://commons.wikimedia.org/wiki/Commons:Featured_pictures/Non-photographic_media/Computer-generated)
-  seems to match the genre of emojis
-  - Perhaps some portion would be either 0 or 255 alpha-valued, but I would want to check (for the rest)
-    that each image has at least one pixel with 0 < A < 255
-    - Categories: `Astronomy, Biology, Drawing, Engineering, Geology, Heraldry, Insignia, Mathematics, Other`
-
-## Wikidata query service
-
-See [notes on using Wikidata query service](https://github.com/lmmx/devnotes/wiki/Using-Wikidata-Query-Service)
-
-### Discarded options
-
-<details><summary><em>More details</em></summary>
-
-<p>
-
-Another possibility is to use the category [Transparent background](https://commons.wikimedia.org/wiki/Category:Transparent_background)
-- You can filter these for [Featured pictures](https://commons.wikimedia.org/wiki/Category:Transparent_background#)
-  but this doesn't give many (only 22 and they don't look very semitransparent, just "sticker-like",
-  i.e. completely opaque or completely transparent)
-
-</p>
-</details>
+- I'm currently filtering the dataset for PNGs with semitransparency, rather than PNGs with transparency
+  which would include 'stickers', with potentially only two levels of alpha, 0 or 255,
+  (which would presumably be less effective to train on for alpha decompositing)
+- The dataset source is [WIT](https://github.com/google-research-datasets/wit/), the Wikipedia
+  Image-Text dataset from Google Research.

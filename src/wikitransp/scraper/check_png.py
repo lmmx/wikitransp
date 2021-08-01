@@ -147,7 +147,7 @@ def filter_tsv_rows(
       max_size        : The maximum width and height of image to filter for. Default:
                         ``{_MAX_WIDTH_HEIGHT=}``px. Ignored if ``0`` or below.
     """
-    VERBOSE = False
+    VERBOSE = True
     ERROR_VERBOSE = True
     if len(input_tsv_files) == 0:
         raise ValueError("No TSV files to filter")
