@@ -7,7 +7,9 @@ import json
 import time
 from pathlib import Path
 
+import range_streams
 import requests
+from range_streams import RangeStream
 from range_streams.codecs import PngStream
 from tqdm import tqdm
 
@@ -165,6 +167,9 @@ def filter_tsv_rows(
     n_tsv = f"{(n := len(input_tsv_files))} TSV file{'s' if n > 1 else ''}"
     if VERBOSE:
         td_list = []
+    # Make and immediately dispose of an empty RangeStream to get a persistent client
+    # without having to import httpx at all (which avoids Sphinx type import hassle)
+    client = RangeStream(range_streams._EXAMPLE_URL).client
     with open(out_path, "w") as tsv_out:
         tsvwriter = csv.writer(tsv_out, delimiter="\t")
         for tsv_path in tqdm(input_tsv_files, desc=f"Processing {n_tsv}"):
@@ -206,10 +211,16 @@ def filter_tsv_rows(
                                 )
                             if VERBOSE:
                                 t2 = time.time()
-                            p = PngStream(url=thumb_url)
+                            p = PngStream(
+                                url=thumb_url, client=client, enumerate_chunks=False
+                            )
                             if VERBOSE:
                                 t3 = time.time()
                                 print(f" --- PngStream took {t3-t2}s")
+                            if p.data.IHDR.channel_count != 4:
+                                # Don't want indexed so must have 4 channels
+                                continue
+                            p.populate_chunks()  # This is still the slowest step
                             if p.alpha_as_direct and confirm_idat_alpha(stream=p):
                                 if VERBOSE:
                                     print("Writing row...")
