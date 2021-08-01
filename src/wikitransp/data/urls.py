@@ -1,6 +1,7 @@
-__all__ = ["SAMPLE_DATA_URL", "FULL_DATA_URLS"]
+__all__ = ["DATA_URL_DIR", "SAMPLE_DATA_URL", "FULL_DATA_URLS"]
 
-_DATA_URL_PREFIX = "https://storage.googleapis.com/gresearch/wit/wit_v1.train.all-"
+DATA_DIR_URL = "https://storage.googleapis.com/gresearch/wit/"
+_DATA_URL_PREFIX = f"{DATA_DIR_URL}wit_v1.train.all-"
 
 SAMPLE_DATA_URL = f"{_DATA_URL_PREFIX}1percent_sample.tsv.gz"
 """

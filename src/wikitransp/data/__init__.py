@@ -1,3 +1,9 @@
-from .urls import FULL_DATA_URLS, SAMPLE_DATA_URL
+from pathlib import Path as _Path
 
-__all__ = ["SAMPLE_DATA_URL", "FULL_DATA_URLS"]
+from . import __path__ as _dir_nspath
+from . import store
+from .urls import DATA_DIR_URL, FULL_DATA_URLS, SAMPLE_DATA_URL
+
+__all__ = ["DATA_DIR_URL", "SAMPLE_DATA_URL", "FULL_DATA_URLS", "_dir_path"]
+
+_dir_path = _Path(list(_dir_nspath)[0])

@@ -12,6 +12,5 @@ version.py
 .eggs
 .cache
 .pytest_cache/
-**/assets/*.json
-*.db-journal
-**/assets/package_catalogue.db
+**/store/*.gz
+**/store/*.tsv
