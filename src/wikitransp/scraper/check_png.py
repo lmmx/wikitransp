@@ -170,6 +170,7 @@ def filter_tsv_rows(
     # Make and immediately dispose of an empty RangeStream to get a persistent client
     # without having to import httpx at all (which avoids Sphinx type import hassle)
     client = RangeStream(range_streams._EXAMPLE_URL).client
+    count = 0
     with open(out_path, "w") as tsv_out:
         tsvwriter = csv.writer(tsv_out, delimiter="\t")
         for tsv_path in tqdm(input_tsv_files, desc=f"Processing {n_tsv}"):
@@ -200,7 +201,8 @@ def filter_tsv_rows(
                             continue
                         if VERBOSE:
                             t0 = time.time()
-                            print(f"Checking {png_url=}")
+                            count += 1
+                            print(f"Checking PNG {count} {png_url=}")
                         try:
                             if png_width <= thumbnail_width:
                                 # Can happen if min_size < thumbnail_width
@@ -212,7 +214,9 @@ def filter_tsv_rows(
                             if VERBOSE:
                                 t2 = time.time()
                             p = PngStream(
-                                url=thumb_url, client=client, enumerate_chunks=False
+                                url=thumb_url,
+                                client=client,
+                                enumerate_chunks=False,
                             )
                             if VERBOSE:
                                 t3 = time.time()
@@ -225,7 +229,12 @@ def filter_tsv_rows(
                                 if VERBOSE:
                                     print("Writing row...")
                                 tsvwriter.writerow(row)
+                            p.close()
                         except Exception as e:
+                            try:
+                                p.close()
+                            except Exception:
+                                pass
                             if ERROR_VERBOSE:
                                 print(e)
                                 print(f"Possibly add to banned URLs: {png_url}")
