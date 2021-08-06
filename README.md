@@ -50,7 +50,7 @@ Intended usage is to provide a simple interface to a scraped dataset of images f
   ```
       BonVoyage ⠶ Thank you for scraping with Wikitransp :^)-|-<
       ----------------------------------------------------------
-      Init             : n=1   
+      Init             : n=1
       CheckPng         : n=8181
       PrePngStream     : n=8168
       PngStream        : n=8117, μ=0.3169, min=0.0533, max=3.8237
@@ -62,11 +62,11 @@ Intended usage is to provide a simple interface to a scraped dataset of images f
       AverageTime      : n=6074, μ=0.4433, min=0.0998, max=4.1011
       ConfAlpha        : n=1905, μ=0.0682, min=0.0092, max=0.2414
       WriteRow         : n=1905, μ=0.0000, min=0.0000, max=0.0051
-      RoutineException : n=74  
-      BanURLException  : n=74  
+      RoutineException : n=74
+      BanURLException  : n=74
       ----------------------------------------------------------
   ```
-  
+
   `BanURLException` indicates a suggestion to add URLs to the banned URL list (usually due to 404,
   but check these manually).
 

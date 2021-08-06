@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import logging
 import time
 from enum import Enum
-from sys import stderr, stdout
-from typing import Literal, overload, Type
-import logging
 from logging.handlers import RotatingFileHandler
+from sys import stderr, stdout
+from typing import Literal, Type, overload
 
 from ..logs import _dir_path as logs_dir
 
@@ -44,7 +44,7 @@ class Logger:
     Initially did not use the :mod:`logging` module so has both levels and verbosity
     controls (may adapt/remove at a later date).
     """
-    ADD_SILENTLY: bool = False
+
     DEFAULT_FILE_NAME: str = "wikitransp.log"
 
     def __init__(
@@ -52,23 +52,18 @@ class Logger:
         name: str = "",
         log_level: int = logging.DEBUG,
         console_level: int = logging.INFO,
-        out=stdout,
-        err=stderr,
-        verbose=True,
-        error_verbose=True,
         simple: bool = True,
         which: list[Log] | None = None,
         internal: bool = False,
-        add_silently: bool = ADD_SILENTLY,
         line_ending: str = "\n",
         path: Path | None = None,
-        n_logs: int = 5,
+        n_logs: int = 10,
         term_headers: bool = False,
     ):
         """
-        Create a logger writing events to ``out`` (default: STDOUT) and errors to
-        ``err`` (default: STDERR), either of which may be silenced by the ``verbose``
-        and ``error_verbose`` flags.
+        Create a logger writing events level :obj:`logging.INFO` and above to STDERR,
+        and level :obj:`logging.DEBUG` and above to ``path`` (defaulting to ``None``,
+        resulting in the package-internal logs directory at :mod:`wikitransp.logs`).
 
         Args:
           name          : The name for the logger (recommended: pass ``__name__`` from
@@ -77,19 +72,10 @@ class Logger:
           log_level     : Default log file level (default: :obj:`logging.DEBUG`)
           console_level : Default console log level (default: :obj:`logging.INFO`)
           sample        : Whether the run is for the sample
-          out           : Where to print event messages (default: STDOUT)
-          err           : Where to print error messages (default: STDERR)
-          verbose       : Whether to print logged event messages
-          error_verbose : Whether to print logged error messages
           simple        : Whether to print duration simply in logs or with the event
                           the duration is in comparison to
           which         : A list of :class:`~wikitransp.scraper.logger.Log` enums, or
                           ``None``, which is interpreted to mean all enums.
-          add_silently  : Whether the `add` method is silent, overriding verbosity on
-                          a per-`add` basis (default: False, so the `add` method is by
-                          default not silent). Change this when you want to avoid seeing
-                          so many logs, but don't want to filter them out (in which case
-                          that they'd not be logged at all).
           line_ending   : The default line ending for logs (default: "\n"), overridable
                           per-entry using the `add` method's ``suffix`` argument.
           path          : The path to write the log to (rotated up to ``n_logs`` times).
@@ -100,11 +86,6 @@ class Logger:
         self.log_level = log_level
         self.console_level = console_level
         self.logs: dict[str, list[Event]] = {}
-        self.OUT = out # to be decommisioned
-        self.ERR = err # to be decommisioned
-        self.VERBOSE = verbose
-        self.ERROR_VERBOSE = error_verbose
-        self.ADD_SILENTLY = add_silently
         self.LINE_ENDING = line_ending
         self.simple = simple
         self.path = path
@@ -121,34 +102,35 @@ class Logger:
         return logs_dir / self.DEFAULT_FILE_NAME if self.path is None else self.path
 
     def prepare_logging(
-        self, console_headers: bool = False,
+        self,
+        console_headers: bool = False,
         log_format="%(asctime)s %(name)-12s %(levelname)-8s %(message)s",
-        datefmt="%m-%d %H:%M",
+        date_format="%m-%d %H:%M",
     ):
         """
         Prepare the custom logger. Note: if :meth:`logging.basicConfig` has been called
         already, it'll override the call within this method.
         """
+        log_pre_exists = self.log_file.exists()
+
+        # Do log rotation (handler not added to logger, just used to rollover if needed)
+        rot_handler = RotatingFileHandler(
+            filename=self.log_file,
+            maxBytes=0,  # Will not write to file
+            backupCount=self.n_logs,
+        )
+        if log_pre_exists:
+            rot_handler.doRollover()
+
         # Set up logging to file
         logging.basicConfig(
-            level=logging.DEBUG, # Lowest named level: log all levels to file
-            format="%(asctime)s %(name)-12s %(levelname)-8s %(message)s",
-            datefmt="%m-%d %H:%M",
+            level=logging.DEBUG,  # Lowest named level: log all levels to file
+            format=log_format,
+            datefmt=date_format,
             filename=self.log_file,
             filemode="w",
         )
-        # Set up rotating file handler instead of basicConfig (single overwritten file)
-        #rot_handler = RotatingFileHandler(
-        #    filename=self.log_file,
-        #    maxBytes=0,
-        #    backupCount=self.n_logs
-        #)
-        #rot_handler.setLevel(self.log_level)
-        #log_formatter = logging.Formatter(fmt=log_format, datefmt=datefmt)
-        ## tell the handler to use this format
-        #rot_handler.setFormatter(log_formatter)
-        ## Add the log message handler to the logger
-        #logging.getLogger(self.name).addHandler(rot_handler)
+
         # define a Handler which writes INFO messages or higher to the sys.stderr
         console = logging.StreamHandler()
         console.setLevel(self.console_level)
@@ -159,14 +141,10 @@ class Logger:
         # tell the handler to use this format
         console.setFormatter(formatter)
         # add the handler to the root logger
-        logging.getLogger(self.name).addHandler(console)
+        logging.getLogger().addHandler(console)
 
         # Now, we can log to the root logger, or any other logger. First the root...
-        logging.info("Here's an info log")
-        logging.debug("Here's area1 debug before info")
-        logging.info("Here's area1 info after debug")
-        logging.warning("Here's area 2 warning before error")
-        logging.error("Here's area 2 error after warning")
+        # logging.getLogger(__name__).debug("Is this thing on?")
 
     @property
     def filter(self) -> list[Log] | None:
@@ -204,24 +182,25 @@ class Logger:
         provenance ambiguous if filtered: seems to be standard/best practice).
         """
         is_error = level == logging.ERROR
-        if msg and (self.ERROR_VERBOSE if is_error else self.VERBOSE):
-            log_msg = (msg + line_ending) # N.B. ``msg`` may be multiline
-            # Slice off a single newline if present at the end, so as to preserve
-            # non-EOL newlines when splitting multi-line strings (but logged separately)
-            log_lines = log_msg[:(-1 if log_msg.endswith("\n") else None)].split("\n")
-            for log_line in log_lines:
-                logging.getLogger(self.name).log(level=level, msg=log_line)
+        log_msg = msg + line_ending  # N.B. ``msg`` may be multiline
+        # Slice off a single newline if present at the end, so as to preserve
+        # non-EOL newlines when splitting multi-line strings (but logged separately)
+        log_lines = log_msg[: (-1 if log_msg.endswith("\n") else None)].split("\n")
+        for log_line in log_lines:
+            logging.getLogger(self.name).log(level=level, msg=log_line)
 
     def write_event(
-        self, level: int, event: Event, only_msg: bool = False, prefix="", suffix: str = "\n"
+        self,
+        level: int,
+        event: Event,
+        only_msg: bool = False,
+        prefix="",
+        suffix: str = "\n",
     ) -> None:
         """
-        Write the event's message to the appropriate STDOUT/STDERR handle
-        (detecting if it's an error from the substring 'Exception' in the
-        :class:`~wikitransp.scraper.logger.Log` type's name).
+        Log the event's message to the appropriate handler(s).
         """
         msg = event.msg if only_msg else prefix + repr(event)
-        level = logging.ERROR if "Exception" in event.type.name else level
         self.write_message(
             msg=msg,
             level=level,
@@ -247,7 +226,6 @@ class Logger:
         nice_logs = f"\n{prefix}".join(fmt_summaries.split("\n"))
         msg += prefix + nice_logs
         msg += "\n" + nice_line
-        unsilence = self.ADD_SILENTLY  # toggle silencer if it's on, to unsilence
         self.add(Log.BonVoyage, msg=msg, prefix="\n    ", level=logging.INFO)
 
     def summarise_log_records(self, which_name: str) -> dict:
@@ -279,8 +257,7 @@ class Logger:
         since: Log | None = None,
         prefix: str = "    ",
         suffix: str | None = None,
-        toggle_silencer=False,
-        level = None,
+        level=None,
     ) -> None:
         """
         Add an event with a given type (``what``) along with the current time
@@ -295,8 +272,6 @@ class Logger:
           prefix          : (Optional) Line prefix, to highlight a particular log record
           suffix          : (Optional) Line suffix, the line ending printed for the
                             record. If ``None`` (default), uses the Logger's default.
-          toggle_silencer : Whether to toggle the Logger's default silencing for newly
-                            added events for this one (default: False).
         """
         if level is None:
             level = self.log_level
@@ -320,11 +295,9 @@ class Logger:
             log_list = self.logs.get(what.name)
             assert isinstance(log_list, list)  # give mypy a clue
             log_list.append(event)
-            silent = self.ADD_SILENTLY ^ toggle_silencer
-            if not silent:
-                if suffix is None:
-                    suffix = self.LINE_ENDING
-                self.write_event(level=level, event=event, prefix=prefix, suffix=suffix)
+            if suffix is None:
+                suffix = self.LINE_ENDING
+            self.write_event(level=level, event=event, prefix=prefix, suffix=suffix)
 
     def has_event(self, which: Log) -> bool:
         """
@@ -447,11 +420,16 @@ class Logger:
         mean_td = total_duration / total_events
         return mean_td
 
-    def error(self, msg: str) -> None:
+    def error(self, msg: str, which: Log = Log.InternalLogException) -> None:
         """
         Log an internal error message (without raising an error).
+
+        Args:
+          msg   : Any message passed with the event (or constructed in the logger)
+          which : Type of :class:`~wikitransp.scraper.logger.Log` (default:
+                  ``Log.InternalLogException``)
         """
-        self.add(Log.InternalLogException, msg=msg, level=logging.ERROR)
+        self.add(what=which, msg=msg, level=logging.ERROR)
 
     def get_durations(self, which: Log) -> list[float | None]:
         """

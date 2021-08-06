@@ -4,10 +4,10 @@ import csv
 import gc
 import gzip
 import json
+import logging
 import time
 from io import TextIOWrapper
 from pathlib import Path
-import logging
 
 import range_streams
 import requests
@@ -15,24 +15,17 @@ from range_streams import RangeStream
 from range_streams.codecs import PngStream
 from tqdm import tqdm
 
+from ..logs import _dir_path as logs_dir
 from .ban_list import BANNED_URLS
 from .logger import Log, Logger
-from ..logs import _dir_path as logs_dir
 
 __all__ = ["filter_tsv_rows"]
 
-
-# def png_has_alpha(url: str) -> bool:
-#    p = PngStream(url=url)
-#    return p.alpha_as_direct
 
 _DEFAULT_THUMB_WIDTH = 200
 _MIN_WIDTH_HEIGHT = 1000
 _MAX_WIDTH_HEIGHT = 0
 
-VERBOSE = True
-ERR_VERBOSE = True
-QUIET = False
 LOG_FILTER = None
 # LOG_FILTER = [Log.CheckPng, Log.AverageTime, Log.GarbageCollect, Log.PngDone]
 
@@ -175,8 +168,9 @@ def filter_tsv_rows(
     log_path = logs_dir / f"{out_path.stem}.log"
     n_tsv = f"{(n := len(input_tsv_files))} TSV file{'s' if n > 1 else ''}"
     log = Logger(
-        verbose=VERBOSE, error_verbose=ERR_VERBOSE, which=LOG_FILTER,
-        add_silently=QUIET, path=log_path, name=__name__,
+        which=LOG_FILTER,
+        path=log_path,
+        name=__name__,
     )
     logging.helper = log
     # Make and immediately dispose of an empty RangeStream to get a persistent client
@@ -299,8 +293,7 @@ def handle_tsv_data(
             continue
         count += 1
         msg = f"({count}) @ {png_url}"
-        #log.add(Log.CheckPng, msg, toggle_silencer=True, prefix="\n", suffix=" ")
-        log.add(Log.CheckPng, msg, level=logging.INFO)#, prefix="\n", suffix=" ")
+        log.add(Log.CheckPng, msg, level=logging.INFO)
         try:
             png_is_small = png_width <= thumbnail_width
             if png_is_small:
@@ -348,19 +341,11 @@ def handle_tsv_data(
         td = log.get_duration_between_prior_events(
             which0=Log.CheckPng, which1=Log.GarbageCollect
         )
-        # if log.has_event(which=Log.AverageTime):
-        #    all_td = log.get_durations(which=Log.AverageTime)
-        # else:
-        #    all_td = []
-        # all_td.append(td)
-        # mean_td = sum(all_td) / len(all_td)
         mean_td = log.get_mean_duration(which=Log.AverageTime, extra=[td])
         log.add(
             Log.AverageTime,
             since=Log.CheckPng,
             prefix=f"{mean_td:.4f} ---> ",
-            #toggle_silencer=True,
-            #suffix="",
         )
 
 
