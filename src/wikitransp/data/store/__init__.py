@@ -1,6 +1,6 @@
 from pathlib import Path as _Path
 
-from . import __path__ as _dir_nspath
+from . import __path__ as _dir_nspath  # type: ignore
 
 __all__ = ["_dir_path"]
 

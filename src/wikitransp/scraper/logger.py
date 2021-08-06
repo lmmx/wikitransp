@@ -4,6 +4,7 @@ import logging
 import time
 from enum import Enum
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from sys import stderr, stdout
 from typing import Literal, Type, overload
 
