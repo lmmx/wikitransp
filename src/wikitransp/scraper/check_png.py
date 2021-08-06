@@ -5,7 +5,9 @@ import gc
 import gzip
 import json
 import time
+from io import TextIOWrapper
 from pathlib import Path
+import logging
 
 import range_streams
 import requests
@@ -14,6 +16,8 @@ from range_streams.codecs import PngStream
 from tqdm import tqdm
 
 from .ban_list import BANNED_URLS
+from .logger import Log, Logger
+from ..logs import _dir_path as logs_dir
 
 __all__ = ["filter_tsv_rows"]
 
@@ -25,6 +29,12 @@ __all__ = ["filter_tsv_rows"]
 _DEFAULT_THUMB_WIDTH = 200
 _MIN_WIDTH_HEIGHT = 1000
 _MAX_WIDTH_HEIGHT = 0
+
+VERBOSE = True
+ERR_VERBOSE = True
+QUIET = False
+LOG_FILTER = None
+# LOG_FILTER = [Log.CheckPng, Log.AverageTime, Log.GarbageCollect, Log.PngDone]
 
 
 class TSV_FIELDS:
@@ -47,7 +57,7 @@ class TSV_FIELDS:
     CONTEXT_SECTION_DESCRIPTION = 16
 
 
-def get_png_thumbnail_url(png_url: str, width=_DEFAULT_THUMB_WIDTH, guess=True):
+def get_png_thumbnail_url(png_url: str, width: int = _DEFAULT_THUMB_WIDTH, guess=True):
     f"""
     Given the full URL of a PNG of an image on Wikipedia Commons ``png_url``, extract
     its filename and use that to create a thumbnail URL with the given ``width``.
@@ -149,8 +159,6 @@ def filter_tsv_rows(
       max_size        : The maximum width and height of image to filter for. Default:
                         ``{_MAX_WIDTH_HEIGHT=}``px. Ignored if ``0`` or below.
     """
-    VERBOSE = True
-    ERROR_VERBOSE = True
     if len(input_tsv_files) == 0:
         raise ValueError("No TSV files to filter")
     first_tsv = input_tsv_files[0]
@@ -164,89 +172,205 @@ def filter_tsv_rows(
         # All files
         out_filename = f"{first_tsv.stem.split('-')[0]}_PNGs_with_alpha.tsv"
     out_path = first_tsv.parent / out_filename
+    log_path = logs_dir / f"{out_path.stem}.log"
     n_tsv = f"{(n := len(input_tsv_files))} TSV file{'s' if n > 1 else ''}"
-    if VERBOSE:
-        td_list = []
+    log = Logger(
+        verbose=VERBOSE, error_verbose=ERR_VERBOSE, which=LOG_FILTER,
+        add_silently=QUIET, path=log_path, name=__name__,
+    )
+    logging.helper = log
     # Make and immediately dispose of an empty RangeStream to get a persistent client
     # without having to import httpx at all (which avoids Sphinx type import hassle)
     client = RangeStream(range_streams._EXAMPLE_URL).client
-    count = 0
-    with open(out_path, "w") as tsv_out:
-        tsvwriter = csv.writer(tsv_out, delimiter="\t")
-        for tsv_path in tqdm(input_tsv_files, desc=f"Processing {n_tsv}"):
-            is_gz = tsv_path.suffix == ".gz"
-            opener = gzip.open if is_gz else open
-            mode = "rt" if is_gz else "r"
-            with opener(tsv_path, mode) as tsv_in:
-                tsvreader = csv.reader(tsv_in, delimiter="\t")
-                for row in tsvreader:
-                    if row[TSV_FIELDS.MIME_TYPE] == "image/png":
-                        png_url = row[TSV_FIELDS.IMAGE_URL]
-                        if resume_at is not None:
-                            if png_url == resume_at:
-                                # Matched: set it to None so no more are skipped
-                                resume_at = None
-                                if VERBOSE:
-                                    print(f"Resuming at match: {png_url}")
-                            else:
-                                # Awaiting the matching URL, keep skipping rows
-                                continue
-                        if png_url in BANNED_URLS:
-                            continue
-                        png_width = int(row[TSV_FIELDS.ORIGINAL_WIDTH])
-                        png_height = int(row[TSV_FIELDS.ORIGINAL_HEIGHT])
-                        if min_size > 0 and min(png_width, png_height) < min_size:
-                            continue
-                        if max_size > 0 and max(png_width, png_height) > max_size:
-                            continue
-                        if VERBOSE:
-                            t0 = time.time()
-                            count += 1
-                            print(f"Checking PNG {count} {png_url=}")
-                        try:
-                            if png_width <= thumbnail_width:
-                                # Can happen if min_size < thumbnail_width
-                                thumb_url = png_url
-                            else:
-                                thumb_url = get_png_thumbnail_url(
-                                    png_url=png_url, width=thumbnail_width, guess=True
-                                )
-                            if VERBOSE:
-                                t2 = time.time()
-                            p = PngStream(
-                                url=thumb_url,
-                                client=client,
-                                enumerate_chunks=False,
-                            )
-                            if VERBOSE:
-                                t3 = time.time()
-                                print(f" --- PngStream took {t3-t2}s")
-                            if p.data.IHDR.channel_count != 4:
-                                # Don't want indexed so must have 4 channels
-                                continue
-                            p.populate_chunks()  # This is still the slowest step
-                            if p.alpha_as_direct and confirm_idat_alpha(stream=p):
-                                if VERBOSE:
-                                    print("Writing row...")
-                                tsvwriter.writerow(row)
-                            p.close()
-                        except Exception as e:
-                            try:
-                                p.close()
-                            except Exception:
-                                pass
-                            if ERROR_VERBOSE:
-                                print(e)
-                                print(f"Possibly add to banned URLs: {png_url}")
-                            continue
-                        del p
-                        gc.collect()
-                        if VERBOSE:
-                            t1 = time.time()
-                            td = t1 - t0
-                            td_list.append(td)
-                            mean_td = sum(td_list) / len(td_list)
-                            print(f" ---> {td}s (avg: {mean_td})")
-    if VERBOSE:
-        print(len(td_list))
+    try:
+        with open(out_path, "w") as tsv_out:
+            tsvwriter = csv.writer(tsv_out, delimiter="\t")
+            for tsv_path in tqdm(input_tsv_files, desc=f"Processing {n_tsv}"):
+                handle_tsv_file(
+                    tsv_path=tsv_path,
+                    tsvwriter=tsvwriter,
+                    client=client,
+                    resume_at=resume_at,
+                    thumbnail_width=thumbnail_width,
+                    min_size=min_size,
+                    max_size=max_size,
+                )
+    except KeyboardInterrupt:
+        log.summarise()
+        raise
+    else:
+        log.summarise()
     return out_path
+
+
+def handle_tsv_file(
+    tsv_path: Path,
+    tsvwriter,
+    client,
+    resume_at: str | None,
+    thumbnail_width: int,
+    min_size: int,
+    max_size: int,
+):
+    """
+    Open and process the TSV file (in this function just handle its compression).
+
+    Args:
+      tsv_path        : path to the TSV file (gzipped or uncompressed)
+      tsvwriter       : csv.writer object to write the TSV output file (shared across
+                        all TSV input files)
+      client          : The client all the HTTP requests will share (faster to do so)
+      resume_at       : The image URL (in the dataset) to resume at (default: ``None``)
+      thumbnail_width : The width of the thumbnail to generate when verifying an
+                        image with RGBA channels actually contains alpha transparency.
+      min_size        : The minimum width and height of image to filter for. Default:
+                        ``{_MIN_WIDTH_HEIGHT=}``px. Ignored if ``0`` or below.
+      max_size        : The maximum width and height of image to filter for. Default:
+                        ``{_MAX_WIDTH_HEIGHT=}``px. Ignored if ``0`` or below.
+    """
+    is_gz = tsv_path.suffix == ".gz"
+    opener = gzip.open if is_gz else open
+    mode = "rt" if is_gz else "r"
+    with opener(tsv_path, mode) as tsv_in:
+        handle_tsv_data(
+            fh=tsv_in,
+            tsvwriter=tsvwriter,
+            client=client,
+            resume_at=resume_at,
+            thumbnail_width=thumbnail_width,
+            min_size=min_size,
+            max_size=max_size,
+        )
+
+
+def handle_tsv_data(
+    fh: TextIOWrapper,
+    tsvwriter,
+    client,
+    resume_at: str | None,
+    thumbnail_width: int,
+    min_size: int,
+    max_size: int,
+):
+    """
+    Handle an opened TSV file (regardless of compression) of the dataset.
+
+    Args:
+      fh              : A file handle opened in a suitable mode for reading text from
+                        either a plain text or gzipped text file (a
+                        :class:`io.TextIOWrapper`).
+      tsvwriter       : csv.writer object to write the TSV output file (shared across
+                        all TSV input files)
+      client          : The client all the HTTP requests will share (faster to do so)
+      resume_at       : The image URL (in the dataset) to resume at (default: ``None``)
+      thumbnail_width : The width of the thumbnail to generate when verifying an
+                        image with RGBA channels actually contains alpha transparency.
+      width           : The desired output thumbnail's width (default:
+                        ``{_DEFAULT_THUMB_WIDTH=}``px)
+      min_size        : The minimum width and height of image to filter for. Default:
+                        ``{_MIN_WIDTH_HEIGHT=}``px. Ignored if ``0`` or below.
+      max_size        : The maximum width and height of image to filter for. Default:
+                        ``{_MAX_WIDTH_HEIGHT=}``px. Ignored if ``0`` or below.
+    """
+    tsvreader = csv.reader(fh, delimiter="\t")
+    count = 0
+    log = logging.helper
+    for row in tsvreader:
+        if row[TSV_FIELDS.MIME_TYPE] != "image/png":
+            continue
+        png_url = row[TSV_FIELDS.IMAGE_URL]
+        if resume_at is not None:
+            if png_url == resume_at:
+                # Matched: set it to None so no more are skipped
+                resume_at = None
+                log.add(
+                    Log.MatchResume, f"Resuming at match: {png_url}", level=logging.INFO
+                )
+            else:
+                # Awaiting the matching URL, keep skipping rows
+                continue
+        if png_url in BANNED_URLS:
+            continue
+        png_width = int(row[TSV_FIELDS.ORIGINAL_WIDTH])
+        png_height = int(row[TSV_FIELDS.ORIGINAL_HEIGHT])
+        if min_size > 0 and min(png_width, png_height) < min_size:
+            continue
+        if max_size > 0 and max(png_width, png_height) > max_size:
+            continue
+        count += 1
+        msg = f"({count}) @ {png_url}"
+        #log.add(Log.CheckPng, msg, toggle_silencer=True, prefix="\n", suffix=" ")
+        log.add(Log.CheckPng, msg, level=logging.INFO)#, prefix="\n", suffix=" ")
+        try:
+            png_is_small = png_width <= thumbnail_width
+            if png_is_small:
+                # Can happen if min_size < thumbnail_width
+                thumb_url = png_url
+            else:
+                thumb_url = get_png_thumbnail_url(
+                    png_url=png_url, width=thumbnail_width, guess=True
+                )
+            p = make_png_stream(row=row, url=thumb_url, client=client)
+            if p.data.IHDR.channel_count != 4:
+                # Don't want indexed so must have 4 channels
+                p.close()
+                continue
+            # p.populate_chunks(which=["IDAT"])  # This is still the slowest step
+            p.populate_chunks()
+            log.add(Log.PopulateChunks, since=Log.PngStream)
+            direct_alpha = p.alpha_as_direct
+            log.add(Log.DirectAlpha, since=Log.PopulateChunks)
+
+            if direct_alpha:
+                if confirm_idat_alpha(stream=p):
+                    log.add(Log.ConfAlpha, since=Log.DirectAlpha)
+                    tsvwriter.writerow(row)
+                    log.add(Log.WriteRow, since=Log.ConfAlpha)
+                else:
+                    log.add(Log.ConfAlphaNeg, since=Log.DirectAlpha)
+            else:
+                log.add(Log.DirectAlphaNeg, since=Log.DirectAlpha)
+            p.close()
+        except Exception as e:
+            try:
+                p.close()
+            except Exception:
+                pass
+            log.add(Log.RoutineException, e)
+            msg = f"Possibly add to banned URLs: {png_url}"
+            log.add(Log.BanURLException, msg)
+            continue
+        # Reference for the GC timer
+        log.add(Log.PngDone, prefix=":-) ")
+        del p
+        gc.collect()
+        log.add(Log.GarbageCollect, since=Log.PngDone)
+        td = log.get_duration_between_prior_events(
+            which0=Log.CheckPng, which1=Log.GarbageCollect
+        )
+        # if log.has_event(which=Log.AverageTime):
+        #    all_td = log.get_durations(which=Log.AverageTime)
+        # else:
+        #    all_td = []
+        # all_td.append(td)
+        # mean_td = sum(all_td) / len(all_td)
+        mean_td = log.get_mean_duration(which=Log.AverageTime, extra=[td])
+        log.add(
+            Log.AverageTime,
+            since=Log.CheckPng,
+            prefix=f"{mean_td:.4f} ---> ",
+            #toggle_silencer=True,
+            #suffix="",
+        )
+
+
+def make_png_stream(row: list[str], url: str, client) -> PngStream:
+    log = logging.helper
+    log.add(Log.PrePngStream)
+    p = PngStream(
+        url=url,
+        client=client,
+        enumerate_chunks=False,
+    )
+    log.add(Log.PngStream, since=Log.PrePngStream)
+    return p

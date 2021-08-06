@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from sys import stderr
+
 from .check_png import filter_tsv_rows
 from .decompress_utils import decompress_gz_files
 from .download_utils import download_data_url, download_dataset
@@ -22,11 +24,14 @@ def scrape_images(
       decompress_tsv : Whether to decompress gzipped TSVs before filtering (not
                        necessary, and will increase dataset file size on disk).
     """
-    dataset_files = download_dataset(sample=sample)
-    if decompress_tsv:
-        decompressed_files = decompress_gz_files(paths=dataset_files)
-    filtered_tsv = filter_tsv_rows(
-        input_tsv_files=decompressed_files if decompress_tsv else dataset_files,
-        resume_at=resume_at,
-    )
+    try:
+        dataset_files = download_dataset(sample=sample)
+        if decompress_tsv:
+            decompressed_files = decompress_gz_files(paths=dataset_files)
+        filtered_tsv = filter_tsv_rows(
+            input_tsv_files=decompressed_files if decompress_tsv else dataset_files,
+            resume_at=resume_at,
+        )
+    except KeyboardInterrupt:
+        print(":-o", file=stderr)
     return
