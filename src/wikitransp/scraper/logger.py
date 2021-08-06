@@ -52,7 +52,7 @@ class Logger:
         self,
         name: str = "",
         log_level: int = logging.DEBUG,
-        console_level: int = logging.INFO,
+        console_level: int = logging.CRITICAL,
         simple: bool = True,
         which: list[Log] | None = None,
         internal: bool = False,
@@ -231,7 +231,7 @@ class Logger:
         nice_logs = f"\n{prefix}".join(fmt_summaries.split("\n"))
         msg += prefix + nice_logs
         msg += "\n" + nice_line
-        self.add(Log.BonVoyage, msg=msg, prefix="\n    ", level=logging.INFO)
+        self.add(Log.BonVoyage, msg=msg, prefix="\n    ", level=logging.CRITICAL)
 
     def summarise_log_records(self, which_name: str) -> str:
         which = Log[which_name]  # enum from member name
@@ -436,7 +436,8 @@ class Logger:
           msg   : Any message passed with the event (or constructed in the logger)
           err   : An error to be formatted onto the end of the message
         """
-        msg += str(err).replace("\n", " ")
+        if err is not None:
+            msg += str(err).replace("\n", " ")
         self.add(what=which, msg=msg, level=logging.ERROR)
 
     def get_durations(self, which: Log) -> list[float]:

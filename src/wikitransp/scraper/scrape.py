@@ -33,5 +33,5 @@ def scrape_images(
             resume_at=resume_at,
         )
     except KeyboardInterrupt:
-        print(":-o", file=stderr)
+        raise SystemExit(1)
     return

@@ -306,7 +306,7 @@ def handle_tsv_data(
             continue
         count += 1
         msg = f"({count}) @ {png_url}"
-        log.add(Log.CheckPng, msg, level=logging.INFO)
+        log.add(Log.CheckPng, msg)
         try:
             png_is_small = png_width <= thumbnail_width
             if png_is_small:
