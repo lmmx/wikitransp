@@ -8,7 +8,7 @@ from pathlib import Path
 from sys import stderr, stdout
 from typing import Literal, Type, overload
 
-from ..logs import _dir_path as logs_dir
+from ..logs import logs_dir
 
 __all__ = ["Logger", "Log", "Event"]
 
