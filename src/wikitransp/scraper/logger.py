@@ -148,7 +148,7 @@ class Logger:
         # logging.getLogger(__name__).debug("Is this thing on?")
 
     @property
-    def filter(self) -> list[Log] | None:
+    def filter(self) -> list[Log]:
         return self._logged_types
 
     @filter.setter
@@ -166,9 +166,13 @@ class Logger:
         Determine whether a type of logged event is in the
         :attr:`~wikitransp.scraper.logger.Logger.filter` list.
         """
-        return (self.filter == [] or which in self.filter) and (
-            isinstance(which, Log)  # Ensure it's in the Enum
-        )
+        if self.filter is None:
+            is_in = True
+        else:
+            is_in = (self.filter == [] or which in self.filter) and (
+                isinstance(which, Log)  # Ensure it's in the Enum
+            )
+        return is_in
 
     def write_message(
         self,
@@ -229,24 +233,27 @@ class Logger:
         msg += "\n" + nice_line
         self.add(Log.BonVoyage, msg=msg, prefix="\n    ", level=logging.INFO)
 
-    def summarise_log_records(self, which_name: str) -> dict:
+    def summarise_log_records(self, which_name: str) -> str:
         which = Log[which_name]  # enum from member name
         summary = {}
-        max_count_chars = len(str(max(len(self.logs.get(k)) for k in self.logs)))
+        max_count = max(len(self.logs[k]) for k in self.logs)
+        max_count_chars = len(str(max_count))
         if self.has_event(which=which):
-            entries = self.logs.get(which_name)
+            entries = self.logs[which_name]
             n_records = len(entries)
             summary.update({"n": str(n_records).ljust(max_count_chars)})
-            durations = [e.duration for e in entries]
-            if None not in durations:
-                mean_duration = sum(durations) / len(durations)
+            durations = [e.duration for e in entries if e.duration is not None]
+            assert None not in durations  # give mypy a clue
+            if durations:
+                total_durations = sum(durations)
+                assert total_durations is not None  # give mypy a clue
+                mean_duration = total_durations / len(durations)
                 summary.update({"μ": f"{mean_duration:.4f}"})
                 summary.update({"min": f"{min(durations):.4f}"})
                 summary.update({"max": f"{max(durations):.4f}"})
         else:
             n_records = 0
-            summary.update({"records": n_records})
-        summary_str = ""
+            summary.update({"records": str(n_records)})
         summary_str = ", ".join(f"{k}={v}" for k, v in summary.items())
         return summary_str
 
@@ -363,7 +370,7 @@ class Logger:
     def get_mean_duration(
         self,
         which: Log,
-        extra: list[float | None] | None = None,
+        extra: list[float] | None = None,
         internal: Literal[False] = False,
     ) -> float:
         ...
@@ -372,7 +379,7 @@ class Logger:
     def get_mean_duration(
         self,
         which: Log,
-        extra: list[float | None] | None,  # no default value as positional arg follows
+        extra: list[float] | None,  # no default value as positional arg follows
         internal: Literal[True],
     ) -> float | None:
         ...
@@ -380,7 +387,7 @@ class Logger:
     def get_mean_duration(
         self,
         which: Log,
-        extra: list[float | None] | None = None,
+        extra: list[float] | None = None,
         internal: bool = False,
     ) -> float | None:
         """
@@ -395,16 +402,8 @@ class Logger:
             extra = []
         if self.has_event(which=which):
             durations = self.get_durations(which=which)
-            if None in durations:
-                err_msg = "One or more of the durations to average were None"
-                if internal:
-                    self.error(msg=err_msg)
-                    return None
-                else:
-                    raise ValueError(err_msg)
         else:
             durations = []
-        assert None not in durations  # give mypy a clue
         if extra:  # if non-empty list
             # Either an in/valid list
             if None in extra:  # invalid
@@ -421,18 +420,26 @@ class Logger:
         mean_td = total_duration / total_events
         return mean_td
 
-    def error(self, msg: str, which: Log = Log.InternalLogException) -> None:
+    def error(
+        self,
+        which: Log = Log.InternalLogException,
+        msg: str = "",
+        *,
+        err: Exception | None = None,
+    ) -> None:
         """
         Log an internal error message (without raising an error).
 
         Args:
-          msg   : Any message passed with the event (or constructed in the logger)
           which : Type of :class:`~wikitransp.scraper.logger.Log` (default:
                   ``Log.InternalLogException``)
+          msg   : Any message passed with the event (or constructed in the logger)
+          err   : An error to be formatted onto the end of the message
         """
+        msg += str(err).replace("\n", " ")
         self.add(what=which, msg=msg, level=logging.ERROR)
 
-    def get_durations(self, which: Log) -> list[float | None]:
+    def get_durations(self, which: Log) -> list[float]:
         """
         Return the :attr:`~wikitransp.scraper.logger.Event.duration` attributes
         stored for each of the logged events of
@@ -445,7 +452,7 @@ class Logger:
           which : The Log enum record type (i.e. the type of the event).
         """
         log_list = self.get_logs(which=which)
-        return [e.duration for e in log_list]
+        return [e.duration for e in log_list if e.duration is not None]
 
     def get_last_duration(self, which: Log) -> float | None:
         """

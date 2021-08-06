@@ -36,6 +36,7 @@ def download_data_url(data_url: str) -> Path:
     start_at = 0
     if store_file.exists():
         file_len = store_file.stat().st_size
+        assert s.total_bytes is not None  # give mypy a clue
         if file_len < s.total_bytes:
             # Download rest of file
             remaining_range = (file_len, s.total_bytes)

@@ -6,8 +6,8 @@ import gzip
 import json
 import logging
 import time
-from io import TextIOWrapper
 from pathlib import Path
+from typing import TextIO
 
 import range_streams
 import requests
@@ -28,6 +28,8 @@ _MAX_WIDTH_HEIGHT = 0
 
 LOG_FILTER = None
 # LOG_FILTER = [Log.CheckPng, Log.AverageTime, Log.GarbageCollect, Log.PngDone]
+
+log: Logger  # set as global variable in `filter_tsv_rows`
 
 
 class TSV_FIELDS:
@@ -167,12 +169,13 @@ def filter_tsv_rows(
     out_path = first_tsv.parent / out_filename
     log_path = logs_dir / f"{out_path.stem}.log"
     n_tsv = f"{(n := len(input_tsv_files))} TSV file{'s' if n > 1 else ''}"
+    global log  # global singleton
     log = Logger(
         which=LOG_FILTER,
         path=log_path,
         name=__name__,
     )
-    logging.helper = log
+    # logging.helper = log # global now
     # Make and immediately dispose of an empty RangeStream to get a persistent client
     # without having to import httpx at all (which avoids Sphinx type import hassle)
     client = RangeStream(range_streams._EXAMPLE_URL).client
@@ -222,10 +225,7 @@ def handle_tsv_file(
       max_size        : The maximum width and height of image to filter for. Default:
                         ``{_MAX_WIDTH_HEIGHT=}``px. Ignored if ``0`` or below.
     """
-    is_gz = tsv_path.suffix == ".gz"
-    opener = gzip.open if is_gz else open
-    mode = "rt" if is_gz else "r"
-    with opener(tsv_path, mode) as tsv_in:
+    with tsv_opener(tsv_path) as tsv_in:
         handle_tsv_data(
             fh=tsv_in,
             tsvwriter=tsvwriter,
@@ -237,8 +237,22 @@ def handle_tsv_file(
         )
 
 
+def tsv_opener(path: Path) -> TextIO:
+    """
+    Open a TSV (either text file or gzip-compressed text file).
+
+    Args:
+      path : The path to the TSV file.
+    """
+    if path.suffix == ".gz":
+        fh = gzip.open(path, "rt")
+    else:
+        fh = open(path, "r")
+    return fh
+
+
 def handle_tsv_data(
-    fh: TextIOWrapper,
+    fh: TextIO,
     tsvwriter,
     client,
     resume_at: str | None,
@@ -251,8 +265,7 @@ def handle_tsv_data(
 
     Args:
       fh              : A file handle opened in a suitable mode for reading text from
-                        either a plain text or gzipped text file (a
-                        :class:`io.TextIOWrapper`).
+                        either a plain text or gzipped text file.
       tsvwriter       : csv.writer object to write the TSV output file (shared across
                         all TSV input files)
       client          : The client all the HTTP requests will share (faster to do so)
@@ -268,7 +281,7 @@ def handle_tsv_data(
     """
     tsvreader = csv.reader(fh, delimiter="\t")
     count = 0
-    log = logging.helper
+    # log = logging.helper # global now
     for row in tsvreader:
         if row[TSV_FIELDS.MIME_TYPE] != "image/png":
             continue
@@ -329,9 +342,9 @@ def handle_tsv_data(
                 p.close()
             except Exception:
                 pass
-            log.add(Log.RoutineException, e)
+            log.error(Log.RoutineException, err=e)
             msg = f"Possibly add to banned URLs: {png_url}"
-            log.add(Log.BanURLException, msg)
+            log.error(Log.BanURLException, msg)
             continue
         # Reference for the GC timer
         log.add(Log.PngDone, prefix=":-) ")
@@ -341,6 +354,7 @@ def handle_tsv_data(
         td = log.get_duration_between_prior_events(
             which0=Log.CheckPng, which1=Log.GarbageCollect
         )
+        assert td is not None  # give mypy a clue
         mean_td = log.get_mean_duration(which=Log.AverageTime, extra=[td])
         log.add(
             Log.AverageTime,
@@ -350,7 +364,7 @@ def handle_tsv_data(
 
 
 def make_png_stream(row: list[str], url: str, client) -> PngStream:
-    log = logging.helper
+    # log = logging.helper # global now
     log.add(Log.PrePngStream)
     p = PngStream(
         url=url,
