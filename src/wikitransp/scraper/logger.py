@@ -463,7 +463,7 @@ class Logger:
         self.consecutive_failures += 1
         if self.consecutive_failures > self.fail_limit:
             self.summarise()
-            exc = MaxLogFailureError("Failing fast")
+            exc = MaxLogFailureError(log=self)
             self.error(err=exc)
             raise exc from err
 
