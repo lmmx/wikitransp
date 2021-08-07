@@ -93,8 +93,8 @@ def get_png_thumbnail_url(png_url: str, width: int = _DEFAULT_THUMB_WIDTH, guess
         try:
             thumb_url = j["query"]["pages"]["-1"]["imageinfo"][0]["thumburl"]
         except:
-            print(api_url)  # Want to know which URLs don't conform if any
-            raise
+            # Want to know which URLs don't conform if any
+            raise ValueError(f"{api_url=} does not conform")
     return thumb_url
 
 
@@ -313,9 +313,12 @@ def handle_tsv_data(
                 # Can happen if min_size < thumbnail_width
                 thumb_url = png_url
             else:
-                thumb_url = get_png_thumbnail_url(
-                    png_url=png_url, width=thumbnail_width, guess=True
-                )
+                try:
+                    thumb_url = get_png_thumbnail_url(
+                        png_url=png_url, width=thumbnail_width, guess=True
+                    )
+                except Exception as excinfo:
+                    log.error(err=excinfo)
             p = make_png_stream(row=row, url=thumb_url, client=client)
             if p.data.IHDR.channel_count != 4:
                 # Don't want indexed so must have 4 channels
