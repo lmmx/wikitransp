@@ -18,6 +18,7 @@ class MaxLogFailureError(ValueError):
         message = f"Hit maximum number of consecutive failures {log.fail_limit}"
         super().__init__(message)
 
+
 class Log(Enum):
     """
     The different types of logged event, in order of execution (with any non-specific
