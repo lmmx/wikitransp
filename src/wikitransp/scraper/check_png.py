@@ -131,6 +131,7 @@ def confirm_idat_alpha(stream: PngStream, nonzero: bool = True) -> bool:
 def filter_tsv_rows(
     input_tsv_files: list[Path],
     resume_at: str | None = None,
+    resume_after: str | None = None,
     thumbnail_width=_DEFAULT_THUMB_WIDTH,
     min_size=_MIN_WIDTH_HEIGHT,
     max_size=_MAX_WIDTH_HEIGHT,
@@ -144,9 +145,12 @@ def filter_tsv_rows(
     To reduce the dataset size (or as a quality filter), filter out images of width
     and/or height below ``min_size`` or above ``max_size``.
 
+    Note: only pass one of ``resume_at`` or ``resume_after``.
+
     Args:
       input_tsv_files : The TSV file path(s). Gzip-compressed files are acceptable.
-      resume_at       : The image URL (in the dataset) to resume at (default: ``None``)
+      resume_at       : Image URL (in the dataset) to resume at (default: ``None``)
+      resume_after    : Image URL (in the dataset) to resume after (default: ``None``)
       thumbnail_width : The width of the thumbnail to generate when verifying an
                         image with RGBA channels actually contains alpha transparency.
       min_size        : The minimum width and height of image to filter for. Default:
@@ -154,6 +158,11 @@ def filter_tsv_rows(
       max_size        : The maximum width and height of image to filter for. Default:
                         ``{_MAX_WIDTH_HEIGHT=}``px. Ignored if ``0`` or below.
     """
+    if (resume_at is not None) and (resume_after is not None):
+        raise ValueError(f"Got passed values for both {resume_at=} and {resume_after=}")
+    skip_resume_url = resume_after is not None
+    resume_at_url = resume_after if skip_resume_url else resume_at
+    tsv_out_mode = "w" if resume_at_url is None else "a"
     if len(input_tsv_files) == 0:
         raise ValueError("No TSV files to filter")
     first_tsv = input_tsv_files[0]
@@ -180,19 +189,21 @@ def filter_tsv_rows(
     # without having to import httpx at all (which avoids Sphinx type import hassle)
     client = RangeStream(range_streams._EXAMPLE_URL).client
     try:
-        with open(out_path, "w") as tsv_out:
+        with open(out_path, tsv_out_mode) as tsv_out:
             tsvwriter = csv.writer(tsv_out, delimiter="\t")
             for tsv_path in tqdm(input_tsv_files, desc=f"Processing {n_tsv}"):
                 handle_tsv_file(
                     tsv_path=tsv_path,
                     tsvwriter=tsvwriter,
                     client=client,
-                    resume_at=resume_at,
+                    resume_at=resume_at_url,
+                    skip_resume_url=skip_resume_url,
                     thumbnail_width=thumbnail_width,
                     min_size=min_size,
                     max_size=max_size,
                 )
     except KeyboardInterrupt:
+        log.early_halt()
         log.summarise()
         raise
     else:
@@ -205,6 +216,7 @@ def handle_tsv_file(
     tsvwriter,
     client,
     resume_at: str | None,
+    skip_resume_url: bool,
     thumbnail_width: int,
     min_size: int,
     max_size: int,
@@ -218,6 +230,7 @@ def handle_tsv_file(
                         all TSV input files)
       client          : The client all the HTTP requests will share (faster to do so)
       resume_at       : The image URL (in the dataset) to resume at (default: ``None``)
+      skip_resume_url : Whether to skip the ``resume_at`` URL
       thumbnail_width : The width of the thumbnail to generate when verifying an
                         image with RGBA channels actually contains alpha transparency.
       min_size        : The minimum width and height of image to filter for. Default:
@@ -231,6 +244,7 @@ def handle_tsv_file(
             tsvwriter=tsvwriter,
             client=client,
             resume_at=resume_at,
+            skip_resume_url=skip_resume_url,
             thumbnail_width=thumbnail_width,
             min_size=min_size,
             max_size=max_size,
@@ -256,6 +270,7 @@ def handle_tsv_data(
     tsvwriter,
     client,
     resume_at: str | None,
+    skip_resume_url: bool,
     thumbnail_width: int,
     min_size: int,
     max_size: int,
@@ -270,6 +285,7 @@ def handle_tsv_data(
                         all TSV input files)
       client          : The client all the HTTP requests will share (faster to do so)
       resume_at       : The image URL (in the dataset) to resume at (default: ``None``)
+      skip_resume_url : Whether to skip the ``resume_at`` URL (default: ``False``)
       thumbnail_width : The width of the thumbnail to generate when verifying an
                         image with RGBA channels actually contains alpha transparency.
       width           : The desired output thumbnail's width (default:
@@ -290,9 +306,14 @@ def handle_tsv_data(
             if png_url == resume_at:
                 # Matched: set it to None so no more are skipped
                 resume_at = None
+                resume_where = "after" if skip_resume_url else "at"
                 log.add(
-                    Log.MatchResume, f"Resuming at match: {png_url}", level=logging.INFO
+                    Log.MatchResume,
+                    f"Resuming {resume_where} match: {png_url}",
+                    level=logging.INFO,
                 )
+                if skip_resume_url:
+                    continue
             else:
                 # Awaiting the matching URL, keep skipping rows
                 continue

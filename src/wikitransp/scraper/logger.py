@@ -41,8 +41,9 @@ class Log(Enum):
     BanURLException = 13
     GarbageCollect = 14
     AverageTime = 15
-    BonVoyage = 16
-    InternalLogException = 17  # Non-specific
+    EarlyHalt = 16
+    BonVoyage = 17
+    InternalLogException = 18  # Non-specific
 
 
 class Logger:
@@ -221,6 +222,29 @@ class Logger:
             level=level,
             line_ending=suffix,
         )
+
+    def early_halt(self):
+        """
+        Give a helpful suggestion of where to resume at in case the user halts the
+        program before it completes.
+        """
+        msg = "Early halt!"
+        resume_where = "AT"
+        if self.has_event(which=Log.CheckPng):
+            png_check_event_t, tsv_write_event_t = Log.CheckPng, Log.WriteRow
+            last_checked_png = self.get_prior_event(which=png_check_event_t)
+            last_url = last_checked_png.msg.split("@")[-1].strip()
+            last_png_checked_time = last_checked_png.when
+            if self.has_event(which=tsv_write_event_t):
+                last_tsv_write = self.get_prior_event(which=tsv_write_event_t)
+                last_tsv_write_time = last_tsv_write.when
+                if last_tsv_write_time > last_png_checked_time:
+                    # The last checked PNG was entered into the TSV
+                    resume_where = "AFTER"
+                # (else the last checked PNG either failed or didn't complete)
+                # Don't check if the rest completed, just resume there and re-do it
+            msg += f" You may want to resume {resume_where} the last URL: {last_url}"
+        self.add(Log.EarlyHalt, msg=msg, prefix="\n    ", level=logging.CRITICAL)
 
     def summarise(self):
         """
