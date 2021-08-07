@@ -341,6 +341,7 @@ def handle_tsv_data(
                 log.add(Log.DirectAlphaNeg, since=Log.DirectAlpha)
             p.close()
         except Exception as e:
+            log.fail(err=e)
             try:
                 p.close()
             except Exception:
@@ -364,6 +365,7 @@ def handle_tsv_data(
             since=Log.CheckPng,
             prefix=f"{mean_td:.4f} ---> ",
         )
+        log.succeed()
 
 
 def make_png_stream(row: list[str], url: str, client) -> PngStream:

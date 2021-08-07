@@ -13,6 +13,11 @@ from ..logs import logs_dir
 __all__ = ["Logger", "Log", "Event"]
 
 
+class MaxLogFailureError(ValueError):
+    def __init__(self, log: Logger):
+        message = f"Hit maximum number of consecutive failures {log.fail_limit}"
+        super().__init__(message)
+
 class Log(Enum):
     """
     The different types of logged event, in order of execution (with any non-specific
@@ -60,6 +65,7 @@ class Logger:
         path: Path | None = None,
         n_logs: int = 10,
         term_headers: bool = False,
+        fail_limit: int = 10,
     ):
         """
         Create a logger writing events level :obj:`logging.INFO` and above to STDERR,
@@ -82,6 +88,7 @@ class Logger:
           path          : The path to write the log to (rotated up to ``n_logs`` times).
           n_logs        : The maximum number of log backups to keep in rotation (total)
           term_headers  : Whether to show log headers in the console logs.
+          fail_limit    : Consecutive failure count before raising MaxLogFailureError
         """
         self.name = name
         self.log_level = log_level
@@ -91,6 +98,8 @@ class Logger:
         self.simple = simple
         self.path = path
         self.n_logs = n_logs
+        self.fail_limit = fail_limit
+        self.consecutive_failures = 0
         self.prepare_logging(console_headers=term_headers)
         self.filter = [] if which is None else which
         self.add(Log.Init)
@@ -437,8 +446,29 @@ class Logger:
           err   : An error to be formatted onto the end of the message
         """
         if err is not None:
-            msg += str(err).replace("\n", " ")
+            msg += repr(err).replace("\n", " ")
         self.add(what=which, msg=msg, level=logging.ERROR)
+
+    def fail(self, err: Exception):
+        """
+        Record the failure and increment the count of consecutive failures. When this
+        count reaches :attr:`~wikitransp.logger.Logger.fail_limit`, a
+        :class:`~wikitransp.logger.MaxLogFailureError` will be thrown.
+
+        Args:
+          err : The most recent error.
+        """
+        if self.consecutive_failures > 0:
+            self.error(msg=f"{self.consecutive_failures=}")
+        self.consecutive_failures += 1
+        if self.consecutive_failures > self.fail_limit:
+            self.summarise()
+            exc = MaxLogFailureError("Failing fast")
+            self.error(err=exc)
+            raise exc from err
+
+    def succeed(self):
+        self.consecutive_failures = 0
 
     def get_durations(self, which: Log) -> list[float]:
         """
