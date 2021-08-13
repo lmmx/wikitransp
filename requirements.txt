@@ -1,3 +1,4 @@
+humanfriendly
 range_streams
 requests
 tqdm

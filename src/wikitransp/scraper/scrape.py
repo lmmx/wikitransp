@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from signal import SIGINT
 from sys import stderr
 
 from .check_png import filter_tsv_rows
@@ -14,6 +15,7 @@ def scrape_images(
     resume_at: str | None = None,
     resume_after: str | None = None,
     decompress_tsv: bool = False,
+    fetch_async: bool = True,
 ) -> None:
     """
     Build a local dataset by scanning the WIT datatset (or a small sample of it)
@@ -33,7 +35,10 @@ def scrape_images(
         filtered_tsv = filter_tsv_rows(
             input_tsv_files=decompressed_files if decompress_tsv else dataset_files,
             resume_at=resume_at,
+            fetch_async=fetch_async,
         )
     except KeyboardInterrupt:
-        raise SystemExit(1)
+        raise SystemExit(SIGINT.value)  # exit code 2
+    except Exception as exc:
+        raise exc from SystemExit(10)
     return

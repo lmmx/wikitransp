@@ -3,12 +3,16 @@ from __future__ import annotations
 import logging
 import time
 from enum import Enum
+from io import SEEK_END, StringIO
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from sys import stderr, stdout
 from typing import Literal, Type, overload
 
+from humanfriendly import format_timespan
+
 from ..logs import logs_dir
+from .buf_grep import grep_backwards
 
 __all__ = ["Logger", "Log", "Event"]
 
@@ -29,21 +33,29 @@ class Log(Enum):
     MatchResume = 1
     CheckPng = 2
     PrePngStream = 3
-    PngStream = 4
-    PopulateChunks = 5
-    DirectAlpha = 6
-    ConfAlpha = 7
-    WriteRow = 8
-    ConfAlphaNeg = 9
-    DirectAlphaNeg = 10
-    PngDone = 11
-    RoutineException = 12
-    BanURLException = 13
-    GarbageCollect = 14
-    AverageTime = 15
-    EarlyHalt = 16
-    BonVoyage = 17
-    InternalLogException = 18  # Non-specific
+    PrePngStreamAsyncFetcher = 4
+    PngStream = 5
+    FetchIteration = 6
+    PopulateChunks = 7
+    DirectAlpha = 8
+    ConfAlpha = 9
+    WriteRow = 10
+    ConfAlphaNeg = 11
+    DirectAlphaNeg = 12
+    PngSuccess = 13
+    PngDone = 14
+    UnclosedStreamException = 15
+    RoutineException = 16
+    BanURL = 17
+    BanURLException = 18  # Deprecated
+    URLException = 19
+    GarbageCollect = 20
+    AverageTime = 21
+    EarlyHalt = 22
+    HaltFinished = 23
+    ResumePoint = 24
+    BonVoyage = 25
+    InternalLogException = 26  # Non-specific
 
 
 class Logger:
@@ -68,6 +80,7 @@ class Logger:
         n_logs: int = 10,
         term_headers: bool = False,
         fail_limit: int = 10,
+        auto_resume: bool = False,  # Implementation mostly finished
     ):
         """
         Create a logger writing events level :obj:`logging.INFO` and above to STDERR,
@@ -101,6 +114,7 @@ class Logger:
         self.path = path
         self.n_logs = n_logs
         self.fail_limit = fail_limit
+        self.auto_resume = auto_resume
         self.consecutive_failures = 0
         self.prepare_logging(console_headers=term_headers)
         self.filter = [] if which is None else which
@@ -113,6 +127,42 @@ class Logger:
         """
         return logs_dir / self.DEFAULT_FILE_NAME if self.path is None else self.path
 
+    def grep_backwards(
+        in_file: Path,
+        match_substr: str,
+        chunk_size=10,
+        max_count: int = 0,
+    ) -> list[str]:
+        """
+        Helper for scanning a file line by line from the end (when inspecting log
+        messages that come at the end of the logs).
+
+        Args:
+          in_file      : Path of the file to grep backwards in (will be opened and
+                         closed within the method call)
+          match_substr : Substring to match on a line. Regular expression not supported
+          chunk_size   : How many characters to load into the buffer per read chunk.
+                         Should be roughly around or above file's characters per line
+          max_count    : How many matching lines to extract.
+        """
+        with open(in_log_file, "r") as f:
+            match_it = grep_backwards(f, match_substr=match_substr, step=chunk_size)
+            matched_lines = []
+            if max_count > 0:
+                for i in range(max_count):
+                    try:
+                        matched_lines.append(next(match_it))
+                    except StopIteration:
+                        break
+            else:
+                # No maximum, i.e. return any and all matches, i.e. exhaust iterator
+                matched_lines.extend(list(match_it))
+        return matched_lines
+
+    def detect_resume_point(self, log_path: Path) -> None:
+        # Grep from the end of the file backwards
+        self.grep_backwards(in_log_file=log_path, match_substr="ResumePoint ⠶ ")
+
     def prepare_logging(
         self,
         console_headers: bool = False,
@@ -124,6 +174,8 @@ class Logger:
         already, it'll override the call within this method.
         """
         log_pre_exists = self.log_file.exists()
+        if self.auto_resume:
+            self.detect_resume_point(self.log_file)
 
         # Do log rotation (handler not added to logger, just used to rollover if needed)
         rot_handler = RotatingFileHandler(
@@ -157,6 +209,21 @@ class Logger:
 
         # Now, we can log to the root logger, or any other logger. First the root...
         # logging.getLogger(__name__).debug("Is this thing on?")
+
+    @property
+    def time_since_init(self) -> str:
+        """
+        Return a human-readable representation of the time since the Log.Init event.
+        """
+        log_init_event_t = Log.Init
+        if self.has_event(which=log_init_event_t):
+            init_event = self.get_prior_event(which=log_init_event_t)
+            init_time = init_event.when
+            elapsed_seconds = time.time() - init_time
+            elapsed_time = format_timespan(elapsed_seconds)
+        else:
+            elapsed_time = "N/A"
+        return elapsed_time
 
     @property
     def filter(self) -> list[Log]:
@@ -225,12 +292,20 @@ class Logger:
 
     def early_halt(self):
         """
-        Give a helpful suggestion of where to resume at in case the user halts the
-        program before it completes.
+        Indicate the elapsed time and where to find the full log when the program halts.
         """
-        msg = "Early halt!"
-        resume_where = "AT"
+        elapsed_t = self.time_since_init
+        msg = f"Early halt after {elapsed_t}. For the full log see {self.log_file}"
+        self.add(Log.EarlyHalt, msg=msg, prefix="\n    ", level=logging.CRITICAL)
+
+    def suggest_resume(self):
+        """
+        Give a helpful suggestion of where to resume at in the event the user halts the
+        program before it completes. Capitalise to emphasise whether it's at or after
+        the URL in question.
+        """
         if self.has_event(which=Log.CheckPng):
+            resume_where = "AT"
             png_check_event_t, tsv_write_event_t = Log.CheckPng, Log.WriteRow
             last_checked_png = self.get_prior_event(which=png_check_event_t)
             last_url = last_checked_png.msg.split("@")[-1].strip()
@@ -243,8 +318,31 @@ class Logger:
                     resume_where = "AFTER"
                 # (else the last checked PNG either failed or didn't complete)
                 # Don't check if the rest completed, just resume there and re-do it
-            msg += f" You may want to resume {resume_where} the last URL: {last_url}"
-        self.add(Log.EarlyHalt, msg=msg, prefix="\n    ", level=logging.CRITICAL)
+            msg = f"You may want to resume {resume_where} the last URL: {last_url}"
+            self.add(Log.ResumePoint, msg=msg, level=logging.CRITICAL)
+
+    def halt(self):
+        """
+        Handle a shutdown before completion.
+        """
+        self.early_halt()
+        self.suggest_resume()
+        self.summarise()
+
+    def successful_completion(self):
+        """
+        Give a reassuring congratulations in the event the program completes.
+        """
+        elapsed_t = self.time_since_init
+        msg = f"Successful completion in {elapsed_t}. See {self.log_file} for full log."
+        self.add(Log.HaltFinished, msg=msg, prefix="\n    ", level=logging.CRITICAL)
+
+    def complete(self):
+        """
+        Handle a shutdown upon completion.
+        """
+        self.successful_completion()
+        self.summarise()
 
     def summarise(self):
         """
@@ -493,6 +591,10 @@ class Logger:
             raise exc from err
 
     def succeed(self):
+        msg = f"Succeeded"
+        if self.consecutive_failures > 0:
+            msg += f" (resetting {self.consecutive_failures=} to 0)"
+        self.add(Log.PngSuccess, msg=msg)
         self.consecutive_failures = 0
 
     def get_durations(self, which: Log) -> list[float]:
