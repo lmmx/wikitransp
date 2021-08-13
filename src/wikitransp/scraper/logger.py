@@ -53,9 +53,10 @@ class Log(Enum):
     AverageTime = 21
     EarlyHalt = 22
     HaltFinished = 23
-    ResumePoint = 24
-    BonVoyage = 25
-    InternalLogException = 26  # Non-specific
+    LogNotify = 24
+    ResumePoint = 25
+    BonVoyage = 26
+    InternalLogException = 27  # Non-specific
 
 
 class Logger:
@@ -334,8 +335,10 @@ class Logger:
         Give a reassuring congratulations in the event the program completes.
         """
         elapsed_t = self.time_since_init
-        msg = f"Successful completion in {elapsed_t}. See {self.log_file} for full log."
+        msg = f"Successful completion in {elapsed_t}."
         self.add(Log.HaltFinished, msg=msg, prefix="\n    ", level=logging.CRITICAL)
+        msg = f"See {self.log_file} for full log."
+        self.add(Log.LogNotify, msg=msg, level=logging.CRITICAL)
 
     def complete(self):
         """
