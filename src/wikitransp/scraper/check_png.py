@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import csv
+from functools import partial
 import gc
 import gzip
+from itertools import chain
 import json
 import logging
+import multiprocessing as mp
 import subprocess
 import time
 from pathlib import Path
@@ -23,6 +26,7 @@ if MYPY or not TYPE_CHECKING:  # pragma: no cover
     import httpx  # avoid importing to Sphinx type checker
 
 from ..logs import _dir_path as logs_dir
+from ..share.multiproc_utils import batch_multiprocess_with_return
 from .ban_list import BANNED_URLS
 from .logger import Log, Logger
 
@@ -201,21 +205,22 @@ def filter_tsv_rows(
     try:
         with open(out_path, tsv_out_mode) as tsv_out:
             tsvwriter = csv.writer(tsv_out, delimiter="\t")
-            for tsv_count, tsv_path in tqdm(
-                enumerate(input_tsv_files), desc=f"Processing {n_tsv}"
-            ):
-                is_final_tsv = tsv_count == total_tsvs - 1
-                handle_tsv_file(
+            tsv_filter_funcs = [
+                partial(
+                    handle_tsv_file,
                     tsv_path=tsv_path,
-                    tsvwriter=tsvwriter,
-                    client=client,
-                    resume_at=resume_at_url,
-                    skip_resume_url=skip_resume_url,
                     thumbnail_width=thumbnail_width,
                     min_size=min_size,
                     max_size=max_size,
-                    is_final=is_final_tsv,
                 )
+                for tsv_path in input_tsv_files
+            ]
+            # The URL collection functions have been gathered, now run them on all cores
+            url_lists = [*chain.from_iterable(
+                batch_multiprocess_with_return(tsv_filter_funcs, show_progress=True)
+            )]
+            breakpoint()
+            # Now the URLs have been collected, fetch in a single async multiprocess run
     except KeyboardInterrupt:
         log.halt()
         raise
@@ -230,25 +235,15 @@ async def finish_async(client):
 
 def handle_tsv_file(
     tsv_path: Path,
-    tsvwriter,
-    client,
-    resume_at: str | None,
-    skip_resume_url: bool,
     thumbnail_width: int,
     min_size: int,
     max_size: int,
-    is_final: bool,
-):
+) -> list[str]:
     """
     Open and process the TSV file (in this function just handle its compression).
 
     Args:
       tsv_path        : path to the TSV file (gzipped or uncompressed)
-      tsvwriter       : csv.writer object to write the TSV output file (shared across
-                        all TSV input files)
-      client          : The client all the HTTP requests will share (faster to do so)
-      resume_at       : The image URL (in the dataset) to resume at (default: ``None``)
-      skip_resume_url : Whether to skip the ``resume_at`` URL
       thumbnail_width : The width of the thumbnail to generate when verifying an
                         image with RGBA channels actually contains alpha transparency.
       min_size        : The minimum width and height of image to filter for. Default:
@@ -257,30 +252,13 @@ def handle_tsv_file(
                         ``{_MAX_WIDTH_HEIGHT=}``px. Ignored if ``0`` or below.
     """
     with tsv_opener(tsv_path) as tsv_in:
-        if isinstance(client, httpx.Client):
-            handle_tsv_data(
-                fh=tsv_in,
-                tsvwriter=tsvwriter,
-                client=client,
-                resume_at=resume_at,
-                skip_resume_url=skip_resume_url,
-                thumbnail_width=thumbnail_width,
-                min_size=min_size,
-                max_size=max_size,
-                close_client=is_final,
-            )
-        else:
-            handle_tsv_data_async(
-                fh=tsv_in,
-                tsvwriter=tsvwriter,
-                client=client,
-                resume_at=resume_at,
-                skip_resume_url=skip_resume_url,
-                thumbnail_width=thumbnail_width,
-                min_size=min_size,
-                max_size=max_size,
-                close_client=is_final,
-            )
+        url_list = handle_tsv_data(
+            fh=tsv_in,
+            thumbnail_width=thumbnail_width,
+            min_size=min_size,
+            max_size=max_size,
+        )
+        return url_list
 
 
 def tsv_opener(path: Path) -> TextIO:
@@ -299,14 +277,9 @@ def tsv_opener(path: Path) -> TextIO:
 
 def handle_tsv_data(
     fh: TextIO,
-    tsvwriter,
-    client,
-    resume_at: str | None,
-    skip_resume_url: bool,
     thumbnail_width: int,
     min_size: int,
     max_size: int,
-    close_client: bool,
 ):
     """
     Handle an opened TSV file (regardless of compression) of the dataset.
@@ -314,11 +287,6 @@ def handle_tsv_data(
     Args:
       fh              : A file handle opened in a suitable mode for reading text from
                         either a plain text or gzipped text file.
-      tsvwriter       : csv.writer object to write the TSV output file (shared across
-                        all TSV input files)
-      client          : The client all the HTTP requests will share (faster to do so)
-      resume_at       : The image URL (in the dataset) to resume at (default: ``None``)
-      skip_resume_url : Whether to skip the ``resume_at`` URL (default: ``False``)
       thumbnail_width : The width of the thumbnail to generate when verifying an
                         image with RGBA channels actually contains alpha transparency.
       width           : The desired output thumbnail's width (default:
@@ -327,141 +295,11 @@ def handle_tsv_data(
                         ``{_MIN_WIDTH_HEIGHT=}``px. Ignored if ``0`` or below.
       max_size        : The maximum width and height of image to filter for. Default:
                         ``{_MAX_WIDTH_HEIGHT=}``px. Ignored if ``0`` or below.
-      close_client    : Whether to close the client after use.
-    """
-    tsvreader = csv.reader(fh, delimiter="\t")
-    count = 0
-    # log = logging.helper # global now
-    for row in tsvreader:
-        if row[TSV_FIELDS.MIME_TYPE] != "image/png":
-            continue
-        png_url = row[TSV_FIELDS.IMAGE_URL]
-        if resume_at is not None:
-            if png_url == resume_at:
-                # Matched: set it to None so no more are skipped
-                resume_at = None
-                resume_where = "after" if skip_resume_url else "at"
-                log.add(
-                    Log.MatchResume,
-                    f"Resuming {resume_where} match: {png_url}",
-                    level=logging.INFO,
-                )
-                if skip_resume_url:
-                    continue
-            else:
-                # Awaiting the matching URL, keep skipping rows
-                continue
-        if png_url in BANNED_URLS:
-            continue
-        png_width = int(row[TSV_FIELDS.ORIGINAL_WIDTH])
-        png_height = int(row[TSV_FIELDS.ORIGINAL_HEIGHT])
-        if min_size > 0 and min(png_width, png_height) < min_size:
-            continue
-        if max_size > 0 and max(png_width, png_height) > max_size:
-            continue
-        count += 1
-        msg = f"({count}) @ {png_url}"
-        log.add(Log.CheckPng, msg)
-        try:
-            png_is_small = png_width <= thumbnail_width
-            if png_is_small:
-                # Can happen if min_size < thumbnail_width
-                thumb_url = png_url
-            else:
-                try:
-                    thumb_url = get_png_thumbnail_url(
-                        png_url=png_url, width=thumbnail_width, guess=True
-                    )
-                except Exception as excinfo:
-                    log.error(err=excinfo)
-            p = make_png_stream(row=row, url=thumb_url, client=client)
-            if p.data.IHDR.channel_count != 4:
-                # Don't want indexed so must have 4 channels
-                p.close()
-                continue
-            # p.populate_chunks(which=["IDAT"])  # This is still the slowest step
-            p.populate_chunks()
-            log.add(Log.PopulateChunks, since=Log.PngStream)
-            direct_alpha = p.alpha_as_direct
-            log.add(Log.DirectAlpha, since=Log.PopulateChunks)
-
-            if direct_alpha:
-                if confirm_idat_alpha(stream=p):
-                    log.add(Log.ConfAlpha, since=Log.DirectAlpha)
-                    tsvwriter.writerow(row)
-                    log.add(Log.WriteRow, since=Log.ConfAlpha)
-                else:
-                    log.add(Log.ConfAlphaNeg, since=Log.DirectAlpha)
-            else:
-                log.add(Log.DirectAlphaNeg, since=Log.DirectAlpha)
-            p.close()
-        except Exception as e:
-            log.fail(err=e)
-            try:
-                p.close()
-            except Exception:
-                pass
-            log.error(Log.RoutineException, err=e)
-            msg = f"Possibly add to banned URLs: {png_url}"
-            log.error(Log.BanURLException, msg)
-            continue
-        # Reference for the GC timer
-        log.add(Log.PngDone, prefix=":-) ")
-        del p
-        gc.collect()
-        log.add(Log.GarbageCollect, since=Log.PngDone)
-        td = log.get_duration_between_prior_events(
-            which0=Log.CheckPng, which1=Log.GarbageCollect
-        )
-        assert td is not None  # give mypy a clue
-        mean_td = log.get_mean_duration(which=Log.AverageTime, extra=[td])
-        log.add(
-            Log.AverageTime,
-            since=Log.CheckPng,
-            prefix=f"{mean_td:.4f} ---> ",
-        )
-        log.succeed()
-    if close_client:
-        client.close()
-        log.add(Log.ClientClosed)
-
-
-def handle_tsv_data_async(
-    fh: TextIO,
-    tsvwriter,
-    client,
-    resume_at: str | None,
-    skip_resume_url: bool,
-    thumbnail_width: int,
-    min_size: int,
-    max_size: int,
-    close_client: bool,
-):
-    """
-    Handle an opened TSV file (regardless of compression) of the dataset.
-
-    Args:
-      fh              : A file handle opened in a suitable mode for reading text from
-                        either a plain text or gzipped text file.
-      tsvwriter       : csv.writer object to write the TSV output file (shared across
-                        all TSV input files)
-      client          : The client all the HTTP requests will share (faster to do so)
-      resume_at       : The image URL (in the dataset) to resume at (default: ``None``)
-      skip_resume_url : Whether to skip the ``resume_at`` URL (default: ``False``)
-      thumbnail_width : The width of the thumbnail to generate when verifying an
-                        image with RGBA channels actually contains alpha transparency.
-      width           : The desired output thumbnail's width (default:
-                        ``{_DEFAULT_THUMB_WIDTH=}``px)
-      min_size        : The minimum width and height of image to filter for. Default:
-                        ``{_MIN_WIDTH_HEIGHT=}``px. Ignored if ``0`` or below.
-      max_size        : The maximum width and height of image to filter for. Default:
-                        ``{_MAX_WIDTH_HEIGHT=}``px. Ignored if ``0`` or below.
-      close_client    : Whether to close the client after use.
     """
     tsvreader = csv.reader(fh, delimiter="\t")
     count = 0
     urls_to_fetch: dict[str, str] = {}  # {thumb_url: png_url}
-    max_urls_to_fetch = 0  # 0 is no limit (used for trial runs)
+    max_urls_to_fetch = 0 # 0 is no limit (used for trial runs)
     for row_i, row in enumerate(tsvreader):
         if max_urls_to_fetch and count == max_urls_to_fetch:
             break
@@ -474,21 +312,6 @@ def handle_tsv_data_async(
         if png_url in urls_to_fetch.values():
             # Dataset contains duplicate URLs, match them before thumb URL generation
             continue
-        if resume_at is not None:
-            if png_url == resume_at:
-                # Matched: set it to None so no more are skipped
-                resume_at = None
-                resume_where = "after" if skip_resume_url else "at"
-                log.add(
-                    Log.MatchResume,
-                    f"Resuming {resume_where} match: {png_url}",
-                    level=logging.INFO,
-                )
-                if skip_resume_url:
-                    continue
-            else:
-                # Awaiting the matching URL, keep skipping rows
-                continue
         if png_url in BANNED_URLS:
             continue
         png_width = int(row[TSV_FIELDS.ORIGINAL_WIDTH])
@@ -518,6 +341,17 @@ def handle_tsv_data_async(
             log.fail(err=e)
             log.error(Log.RoutineException, err=e)
     url_list = list(urls_to_fetch)
+    # Go no further now: come back to what follows when all files processed
+    return url_list
+
+def deprecated_rest_of_async_fetch_func(tsvwriter, close_client: bool):
+    """
+    Args:
+      tsvwriter       : csv.writer object to write the TSV output file (shared across
+                        all TSV input files)
+      close_client    : Whether to close the client after use.
+    """
+    ###########################################################################
     log.add(Log.PrePngStreamAsyncFetcher)  # Here this is once for all the URLs
     fetched = PngStream.make_async_fetcher(
         urls=url_list,

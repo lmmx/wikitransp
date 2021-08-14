@@ -1,4 +1,5 @@
 humanfriendly
+more_itertools
 range_streams
 requests
 tqdm
