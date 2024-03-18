@@ -507,8 +507,7 @@ class Logger:
         which: Log,
         extra: list[float] | None = None,
         internal: Literal[False] = False,
-    ) -> float:
-        ...
+    ) -> float: ...
 
     @overload
     def get_mean_duration(
@@ -516,8 +515,7 @@ class Logger:
         which: Log,
         extra: list[float] | None,  # no default value as positional arg follows
         internal: Literal[True],
-    ) -> float | None:
-        ...
+    ) -> float | None: ...
 
     def get_mean_duration(
         self,
