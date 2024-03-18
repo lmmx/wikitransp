@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import csv
-from functools import partial
 import gc
 import gzip
-from itertools import chain
 import json
 import logging
 import multiprocessing as mp
 import subprocess
 import time
+from functools import partial
+from itertools import chain
 from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
@@ -216,9 +216,11 @@ def filter_tsv_rows(
                 for tsv_path in input_tsv_files
             ]
             # The URL collection functions have been gathered, now run them on all cores
-            url_lists = [*chain.from_iterable(
-                batch_multiprocess_with_return(tsv_filter_funcs, show_progress=True)
-            )]
+            url_lists = [
+                *chain.from_iterable(
+                    batch_multiprocess_with_return(tsv_filter_funcs, show_progress=True)
+                )
+            ]
             breakpoint()
             # Now the URLs have been collected, fetch in a single async multiprocess run
     except KeyboardInterrupt:
@@ -299,7 +301,7 @@ def handle_tsv_data(
     tsvreader = csv.reader(fh, delimiter="\t")
     count = 0
     urls_to_fetch: dict[str, str] = {}  # {thumb_url: png_url}
-    max_urls_to_fetch = 0 # 0 is no limit (used for trial runs)
+    max_urls_to_fetch = 0  # 0 is no limit (used for trial runs)
     for row_i, row in enumerate(tsvreader):
         if max_urls_to_fetch and count == max_urls_to_fetch:
             break
@@ -343,6 +345,7 @@ def handle_tsv_data(
     url_list = list(urls_to_fetch)
     # Go no further now: come back to what follows when all files processed
     return url_list
+
 
 def deprecated_rest_of_async_fetch_func(tsvwriter, close_client: bool):
     """

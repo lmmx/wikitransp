@@ -1,21 +1,24 @@
 from __future__ import annotations
 
 import multiprocessing as mp
-from multiprocessing import Process, Pool
+from functools import partial
+from multiprocessing import Pool, Process
+
 from more_itertools import chunked
 from tqdm import tqdm
-from functools import partial
-
 
 __all__ = ["batch_multiprocess", "batch_multiprocess_with_return"]
+
 
 def run_and_update(func, pbar):
     func()
     pbar.update()
 
+
 def append_and_update(result, results_list, pbar):
     results_list.append(result)
     pbar.update()
+
 
 def batch_multiprocess(
     function_list, n_cores=mp.cpu_count(), show_progress=False, tqdm_desc=None
@@ -62,7 +65,9 @@ def batch_multiprocess_with_return(
         procs = []
         for f in func_batch:
             if show_progress:
-                tqdm_cb = partial(append_and_update, results_list=pool_results, pbar=pbar)
+                tqdm_cb = partial(
+                    append_and_update, results_list=pool_results, pbar=pbar
+                )
             callback = tqdm_cb if show_progress else pool_results.append
             pool.apply_async(func=f, callback=tqdm_cb)
     pool.close()
