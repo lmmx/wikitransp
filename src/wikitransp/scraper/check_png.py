@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import cudf
 from functools import partial
 import gc
 import gzip
@@ -14,9 +15,10 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
+from aiostream.core import StreamEmpty
 import range_streams
 import requests
-from aiostream.core import StreamEmpty
+import pandas as pd
 from range_streams import RangeStream
 from range_streams.codecs import PngStream
 from tqdm import tqdm
@@ -26,7 +28,8 @@ if MYPY or not TYPE_CHECKING:  # pragma: no cover
     import httpx  # avoid importing to Sphinx type checker
 
 from ..logs import _dir_path as logs_dir
-from ..share.multiproc_utils import batch_multiprocess_with_return
+#from ..share.multiproc_utils import batch_multiprocess_with_return
+from ..share.multiproc_utils import spawned_batch_multiprocess_with_return
 from .ban_list import BANNED_URLS
 from .logger import Log, Logger
 
@@ -203,24 +206,35 @@ def filter_tsv_rows(
     # without having to import httpx at all (which avoids Sphinx type import hassle)
     client = httpx.AsyncClient() if fetch_async else httpx.Client()
     try:
-        with open(out_path, tsv_out_mode) as tsv_out:
-            tsvwriter = csv.writer(tsv_out, delimiter="\t")
-            tsv_filter_funcs = [
-                partial(
-                    handle_tsv_file,
-                    tsv_path=tsv_path,
-                    thumbnail_width=thumbnail_width,
-                    min_size=min_size,
-                    max_size=max_size,
-                )
-                for tsv_path in input_tsv_files
-            ]
-            # The URL collection functions have been gathered, now run them on all cores
-            url_lists = [*chain.from_iterable(
-                batch_multiprocess_with_return(tsv_filter_funcs, show_progress=True)
-            )]
-            breakpoint()
-            # Now the URLs have been collected, fetch in a single async multiprocess run
+        #tsvwriter = csv.writer(tsv_out, delimiter="\t")
+        #breakpoint()
+        tsv_filter_funcs = [
+            partial(
+                handle_tsv_file,
+                tsv_path=tsv_path,
+                thumbnail_width=thumbnail_width,
+                min_size=min_size,
+                max_size=max_size,
+                tsv_number=tsv_i,
+            )
+            for tsv_i, tsv_path in enumerate(input_tsv_files)
+        ]
+        # The URL collection functions have been gathered, now run them on all cores
+        _t0 = time.time()
+        url_lists = [*chain.from_iterable(
+            spawned_batch_multiprocess_with_return(tsv_filter_funcs, show_progress=True,
+                n_cores=mp.cpu_count())
+        )]
+        _t1 = time.time()
+        print(f"Took {_t1-_t0}s")
+        #url_lists = []
+        #for filter_func in tsv_filter_funcs:
+        #    urls = filter_func()
+        #    url_lists.append(urls)
+        #    print("Done")
+        # Now the URLs have been collected, fetch in a single async multiprocess run
+        #with open(out_path, tsv_out_mode) as tsv_out:
+        #    ...
     except KeyboardInterrupt:
         log.halt()
         raise
@@ -233,35 +247,7 @@ async def finish_async(client):
     await client.aclose()
 
 
-def handle_tsv_file(
-    tsv_path: Path,
-    thumbnail_width: int,
-    min_size: int,
-    max_size: int,
-) -> list[str]:
-    """
-    Open and process the TSV file (in this function just handle its compression).
-
-    Args:
-      tsv_path        : path to the TSV file (gzipped or uncompressed)
-      thumbnail_width : The width of the thumbnail to generate when verifying an
-                        image with RGBA channels actually contains alpha transparency.
-      min_size        : The minimum width and height of image to filter for. Default:
-                        ``{_MIN_WIDTH_HEIGHT=}``px. Ignored if ``0`` or below.
-      max_size        : The maximum width and height of image to filter for. Default:
-                        ``{_MAX_WIDTH_HEIGHT=}``px. Ignored if ``0`` or below.
-    """
-    with tsv_opener(tsv_path) as tsv_in:
-        url_list = handle_tsv_data(
-            fh=tsv_in,
-            thumbnail_width=thumbnail_width,
-            min_size=min_size,
-            max_size=max_size,
-        )
-        return url_list
-
-
-def tsv_opener(path: Path) -> TextIO:
+def tsv_opener_deprecated(path: Path) -> TextIO:
     """
     Open a TSV (either text file or gzip-compressed text file).
 
@@ -275,18 +261,18 @@ def tsv_opener(path: Path) -> TextIO:
     return fh
 
 
-def handle_tsv_data(
-    fh: TextIO,
+def handle_tsv_file(
+    tsv_path: Path,
     thumbnail_width: int,
     min_size: int,
     max_size: int,
+    tsv_number: int,
 ):
     """
-    Handle an opened TSV file (regardless of compression) of the dataset.
+    Open and process a TSV file (gzipped or uncompressed) of the dataset.
 
     Args:
-      fh              : A file handle opened in a suitable mode for reading text from
-                        either a plain text or gzipped text file.
+      tsv_path        : path to the TSV file (gzipped or uncompressed)
       thumbnail_width : The width of the thumbnail to generate when verifying an
                         image with RGBA channels actually contains alpha transparency.
       width           : The desired output thumbnail's width (default:
@@ -295,8 +281,27 @@ def handle_tsv_data(
                         ``{_MIN_WIDTH_HEIGHT=}``px. Ignored if ``0`` or below.
       max_size        : The maximum width and height of image to filter for. Default:
                         ``{_MAX_WIDTH_HEIGHT=}``px. Ignored if ``0`` or below.
+      tsv_number      : The number in the list of input TSVs (for logging)
     """
-    tsvreader = csv.reader(fh, delimiter="\t")
+    #tsvreader = csv.reader(fh, delimiter="\t")
+    time.sleep(tsv_number * 1) # stagger by 1.2 second each
+    fields = ["mime_type"]
+    t0 = time.time()
+    try:
+        tsv_df = cudf.read_csv(tsv_path, usecols=fields, sep="\t")
+        t1 = time.time()
+    except Exception as exc:
+        print(f"Got an exception {exc}")
+        return [999]
+    else:
+        print(f"cuDF took {t1-t0}s")
+        return [111]
+    #pd_df = pd.read_csv(tsv_path, usecols=fields, sep="\t")
+    #t2 = time.time()
+    #print(f"pandas took {t2-t1}s")
+    return tsv_df#, pd_df
+
+def handle_tsv_file_deprecated_further():
     count = 0
     urls_to_fetch: dict[str, str] = {}  # {thumb_url: png_url}
     max_urls_to_fetch = 0 # 0 is no limit (used for trial runs)
